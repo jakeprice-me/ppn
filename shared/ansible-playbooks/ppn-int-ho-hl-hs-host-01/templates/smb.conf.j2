@@ -1,0 +1,9 @@
+[my]
+  path = /mnt/data-ssd-01/my/
+  comment = My Fileshare
+  read only = no
+  browsable = yes
+  force user = {{ admin_user }}
+  force group = {{ admin_user }}
+  valid users = {% for item in samba_users %}{{ item.username }}{{ ", " if not loop.last }}{% endfor %}
+

@@ -1,0 +1,65 @@
+---
+- name: Host-01 Server Network Configuration
+  hosts: ppn-int-ho-hl-hs-host-01
+  become: true
+  vars_files:
+    - vars.yml
+    - vault.yml
+
+  tasks:
+
+    - name: Manage eno1 in NetworkManager
+      ansible.builtin.replace:
+        path: /etc/NetworkManager/NetworkManager.conf
+        regexp: managed=false
+        replace: managed=true
+
+    - name: Enable and start services
+      systemd:
+        enabled: yes
+        state: restarted
+        name: NetworkManager
+
+    - name: Create network bridge interface
+      community.general.nmcli:
+        ifname: br0
+        type: bridge
+        conn_name: br0
+        gw4: "{{ vault_gateway_ip }}"
+        dns4: "{{ vault_dns_ip }}"
+        ip4: "{{ vault_host_01_ip }}/24"
+        method4: manual
+        state: present
+        stp: no
+        autoconnect: yes
+
+    - name: Bring up bridge
+      command: nmcli conn up br0
+        
+    - name: Instruct network bridge interface to use ethernet interface
+      community.general.nmcli:
+        ifname: eno1
+        type: bridge-slave
+        master: br0
+        conn_name: bridge-slave-eno1
+        hairpin: no
+        state: present
+        autoconnect: yes
+
+    - name: Bring up bridge-slave-eno1
+      command: nmcli conn up bridge-slave-eno1
+
+    - name: Remove Ifupdown connection
+      community.general.nmcli:
+        ifname: eno1
+        type: ethernet
+        conn_name: "Ifupdown (eno1)"
+        state: absent
+        autoconnect: no
+
+    - name: Disable DHCP on eno1 interface
+      ansible.builtin.replace:
+        path: /etc/network/interfaces
+        regexp: iface eno1 inet dhcp
+        replace: iface eno1 inet manual
+

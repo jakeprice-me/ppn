@@ -1,0 +1,256 @@
+---
+- name: Host-01 Server Configuration
+  hosts: ppn-int-ho-hl-hs-host-01
+  become: true
+  vars_files:
+    - vars.yml
+    - vault.yml
+
+  tasks:
+  
+    - name: Set timezone
+      community.general.timezone:
+        name: Europe/London
+
+    - name: Set hostname
+      hostname:
+        name: "{{ hostname }}"
+    
+    - name: Update repositories and packages
+      apt:
+        name: "*"
+        state: latest
+        update_cache: yes
+
+    - name: Install packages
+      apt:
+        pkg:
+          - bash-completion
+          - borgbackup
+          - cockpit
+          - cockpit-machines
+          - cockpit-pcp
+          - gpg
+          - net-tools
+          - prometheus-node-exporter
+          - python3
+          - python3-pip
+          - samba
+          - tree
+          - vim
+        state: present
+
+    - name: Install QEMU/KVM
+      apt:
+        pkg:
+          - libvirt-clients
+          - libvirt-daemon-system
+          - qemu-system
+        install_recommends: no
+        state: present
+
+    - name: Download packages
+      unarchive:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        remote_src: yes
+      with_items:
+        - { src: "https://github.com/bcpierce00/unison/releases/download/v{{ unison_version }}/unison-v{{ unison_version }}+ocaml-{{ unison_ocaml_version }}+x86_64.linux.tar.gz", dest: /tmp }
+
+    - name: Move package binaries
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        remote_src: yes
+      with_items:
+        - { src: /tmp/bin/unison, dest: /usr/local/bin/unison }
+
+    - name: Make binaries executable
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        mode: "{{ item.mode }}"
+      with_items:
+        - { path: /usr/local/bin/unison, mode: "0755" }
+
+    - name: Allow passwordless sudo
+      blockinfile:
+        path: /etc/sudoers
+        block: |
+          {{ admin_user }} ALL=(ALL:ALL) NOPASSWD: ALL
+ 
+    - name: Add user to groups
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        groups:
+          - "{{ admin_user }}"
+          - kvm
+          - libvirt
+          - sudo
+ 
+    - name: Upload public key for users
+      authorized_key:
+        user: "{{ item.user }}"
+        state: present
+        key: "{{ item.file }}"
+      with_items:
+        - { user: "{{ admin_user }}", file: "{{ lookup('file', '../../ssh-keys/{{ hostname }}.pub') }}" }
+
+    - name: Configure sshd_config
+      ansible.builtin.replace:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      with_items:
+        - { regexp: '#PermitRootLogin prohibit-password', replace: 'PermitRootLogin no' }
+        - { regexp: '#PasswordAuthentication yes', replace: 'PasswordAuthentication no' }
+        - { regexp: '#PermitEmptyPasswords no', replace: 'PermitEmptyPasswords no' }
+        - { regexp: '#LogLevel INFO', replace: 'LogLevel VERBOSE' }
+        - { regexp: '#IgnoreRhosts yes', replace: 'IgnoreRhosts yes' }
+ 
+    - name: Reload SSH
+      ansible.builtin.systemd:
+        name: sshd
+        state: restarted
+
+    - name: Disable selinux for qemu (as we're using Debian)
+      replace:
+        path: /etc/libvirt/qemu.conf
+        regexp: '#security_driver = "selinux"'
+        replace: 'security_driver = "none"'
+
+    - name: Create directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+      with_items:
+        - { path: /mnt/archive-hdd-01 }
+        - { path: /mnt/archive-hdd-01/borg/my }
+        - { path: /mnt/data-ssd-01 }
+
+    - name: Borg password file
+      copy:
+        dest: /home/{{ admin_user }}/.borg_my_passphrase
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: 0400
+        content: |
+           {{ vault_borg_my_passphrase }}
+
+    - name: Mount drives
+      ansible.posix.mount:
+        path: "{{ item.path }}"
+        src: "{{ item.src }}"
+        fstype: "{{ item.fstype }}"
+        state: mounted
+      with_items:
+        - { path: /mnt/data-ssd-01, src: UUID=7a28fb27-9957-4231-a9cf-1a7fa0108920, fstype: ext4 }
+        - { path: /mnt/archive-hdd-01, src: UUID=ebc7b754-fa8f-4387-a979-a55f72a180e0, fstype: ext4 }
+
+    - name: Run Borg Backup Script
+      ansible.builtin.cron:
+        name: "Backup fileshare to Borg repository"
+        minute: "0"
+        hour: "3"
+        weekday: "*"
+        job: "/usr/bin/bash /mnt/data-ssd-01/my/files/code/ppn/shared/scripts/borg_backup_my.sh"
+      become: yes
+      become_user: "{{ admin_user }}"
+
+    - name: Run miniflux-block
+      ansible.builtin.cron:
+        name: "Run miniflux-block"
+        minute: "*/1"
+        hour: "*"
+        weekday: "*"
+        job: "cd /mnt/data-ssd-01/my/files/code/miniflux-block/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/miniflux-block/main.py"
+      become: yes
+      become_user: "{{ admin_user }}"
+
+    - name: Run weather-report
+      ansible.builtin.cron:
+        name: "Run weather-report"
+        minute: "0"
+        hour: "7"
+        weekday: "*"
+        job: "cd /mnt/data-ssd-01/my/files/code/weather-report/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/weather-report/main.py"
+      become: yes
+      become_user: "{{ admin_user }}"
+
+    - name: Run temperature alert
+      ansible.builtin.cron:
+        name: "Run temperature-alert"
+        minute: "0"
+        hour: "18"
+        weekday: "*"
+        job: "cd /mnt/data-ssd-01/my/files/code/temperature-alert/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/temperature-alert/main.py"
+      become: yes
+      become_user: "{{ admin_user }}"
+
+    - name: Remove existing dotfiles
+      file:
+        path: "/home/{{ admin_user }}/.bashrc"
+        state: absent
+
+    - name: Setup dotfiles and some helpful symlinks
+      file:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        state: link
+      with_items:
+        - { src: "/mnt/data-ssd-01/my/files/code/ppn", dest: "/home/{{ admin_user }}/ppn" }
+        - { src: "/mnt/data-ssd-01/my/files/code/ppn/shared/dotfiles/bashrc", dest: "/home/{{ admin_user }}/.bashrc" }
+      become_user: "{{ admin_user }}"
+      become: false
+
+    - name: Create user accounts to be used for Samba
+      user:
+        name: "{{ item.username }}"
+        state: present
+      with_items: "{{ samba_users }}"
+
+    - name: Set samba user account passwords
+      shell: >
+        (pdbedit --user={{ item.username }} 2>&1 > /dev/null)
+        || (echo '{{ item.password }}'; echo '{{ item.password }}')
+        | smbpasswd -s -a {{ item.username }}
+      register: smbpasswd
+      changed_when: "'Added user' in smbpasswd.stdout"
+      with_items: "{{ samba_users }}"
+      no_log: true
+      loop_control:
+        label: "{{ item.username }}"
+
+    - name: Samba configuration
+      template:
+        dest: /etc/samba/smb.conf
+        src: templates/smb.conf.j2
+
+    - name: Update cockpit configuration
+      copy:
+        dest: /etc/cockpit/cockpit.conf
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: 0644
+        content: |
+          [WebService]
+          AllowUnencrypted = true
+          Origins = https://cockpit-{{ hostname }}.int.ppn.sh
+          ProtocolHeader = X-Forwarded-Proto
+
+    - name: Enable and start services
+      systemd:
+        enabled: yes
+        state: restarted
+        name: "{{ item.name }}"
+      with_items:
+        - { name: cockpit }
+        - { name: libvirtd }
+        - { name: prometheus-node-exporter }
+        - { name: smbd }
+

@@ -1,0 +1,9 @@
+hostname: ppn-int-ho-hl-hs-host-01
+admin_user: "{{ vault_admin_user }}"
+samba_users:
+  - username: "{{ vault_samba_user_1_username }}"
+    password: "{{ vault_samba_user_1_password }}"
+  - username: "{{ vault_samba_user_2_username }}"
+    password: "{{ vault_samba_user_2_password }}"
+unison_ocaml_version: 4.12.0
+unison_version: 2.51.4
