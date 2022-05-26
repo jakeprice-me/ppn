@@ -30,6 +30,7 @@
           - cockpit
           - cockpit-machines
           - cockpit-pcp
+          - curl
           - gpg
           - net-tools
           - prometheus-node-exporter
