@@ -1,6 +1,6 @@
 ---
 - name: Host-01 Server Configuration
-  hosts: ppn-int-ho-hl-hs-host-01
+  hosts: "{{ hostname }}"
   become: true
   vars_files:
     - vars.yml
