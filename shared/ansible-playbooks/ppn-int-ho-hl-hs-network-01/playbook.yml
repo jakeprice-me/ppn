@@ -1,0 +1,299 @@
+---
+- name: Network-01 Server Configuration
+  hosts: "{{ hostname }}"
+  become: true
+  vars_files:
+    - vars.yml
+    - vault.yml  
+
+  tasks:
+  
+    - name: Set timezone
+      community.general.timezone:
+        name: Europe/London
+
+    - name: Set hostname
+      hostname:
+        name: "{{ hostname }}"
+
+    - name: Update hosts as hostname changed without using raspi-config
+    # https://www.raspberrypi.org/forums/viewtopic.php?t=49925
+      replace:
+        path: /etc/hosts
+        regexp: raspberrypi
+        replace: "{{ hostname }}"
+
+    - name: Check if Docker is already present.
+      command: which docker
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      register: docker_command_result
+    
+    - name: Download Docker install convenience script.
+      get_url:
+        url: https://get.docker.com/
+        dest: /tmp/get-docker.sh
+        mode: 0775
+      when: docker_command_result.rc == 1
+    
+    - name: Run Docker install convenience script.
+      command: /tmp/get-docker.sh
+      environment:
+        CHANNEL: stable
+      when: docker_command_result.rc == 1
+
+    - name: Update repositories and packages
+      apt:
+        name: "*"
+        state: latest
+        update_cache: yes
+
+    - name: Install packages
+      apt:
+        pkg:
+          - acl
+          - cifs-utils
+          - docker-ce
+          - dnsutils
+          - mailutils
+          - net-tools
+          - prometheus-node-exporter
+          - python3
+          - python3-pip
+          - tmux
+          - tree
+          - vim
+
+    - name: Install Python packages
+      pip:
+        name:
+          - docker
+          - docker-compose
+        extra_args: --user
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Update user (ppn-admin) password
+      user:
+        name: "{{ vault_admin_user }}"
+        password: "{{ vault_admin_user_password | password_hash('sha512') }}"
+        update_password: always
+        groups:
+          - sudo
+          - docker
+        state: present
+
+    - name: Allow passwordless sudo
+      blockinfile:
+        path: /etc/sudoers
+        block: |
+          {{ vault_admin_user }}  ALL=(ALL:ALL) NOPASSWD: ALL
+
+    - name: Configure sshd_config
+      ansible.builtin.replace:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      with_items:
+        - { regexp: '#IgnoreRhosts yes', replace: 'IgnoreRhosts yes' }
+        - { regexp: '#LogLevel INFO', replace: 'LogLevel VERBOSE' }
+        - { regexp: '#PasswordAuthentication yes', replace: 'PasswordAuthentication no' }
+        - { regexp: '#PermitEmptyPasswords no', replace: 'PermitEmptyPasswords no' }
+        - { regexp: '#PermitRootLogin prohibit-password', replace: 'PermitRootLogin no' }
+
+    - name: Upload public key for users
+      ansible.posix.authorized_key:
+        user: "{{ item.user }}"
+        state: present
+        key: "{{ item.file }}"
+      with_items:
+        - { user: "{{ vault_admin_user }}", file: "{{ lookup('file', '../../ssh-keys/{{ hostname }}.pub') }}" }
+
+    - name: Add host to known hosts
+      known_hosts:
+        path: "/home/{{ vault_admin_user }}/.ssh/known_hosts"
+        name: "{{ static_fileserver_addr }}"
+        key: "{{ lookup('pipe', 'ssh-keyscan {{ static_fileserver_addr }} ') }}"
+
+    - name: Copy host-01 private key
+      ansible.builtin.copy:
+        src: ../../ssh-keys/ppn-int-ho-hl-hs-host-01
+        dest: ~/.ssh/ppn-int-ho-hl-hs-host-01
+        mode: '0400'
+        force: yes
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Create directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+        recurse: yes
+      with_items:
+        - { path: "/home/{{ vault_admin_user }}/.unison/" }
+        - { path: /srv/ppn/services/containers/compose }
+        - { path: /srv/ppn/shared/conf/unison/ }
+        - { path: /srv/ppn/shared/scripts }
+        - { path: /var/log/unison }
+
+    - name: Copy unison-docker build directory
+      copy:
+        src: ../../../services/containers/images/unison-docker/
+        dest: /srv/ppn/services/containers/images/unison-docker/
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+
+    - name: Copy unison profile file
+      copy:
+        src: ../../../shared/conf/unison/{{ hostname }}.prf
+        dest: /srv/ppn/shared/conf/unison/{{ hostname }}.prf
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+
+    - name: Build Unison Docker Image
+      community.docker.docker_image:
+        build:
+          path: /srv/ppn/services/containers/images/unison-docker
+        name: unison-docker
+        tag: 2.51.3
+        source: build
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Build dnsmasq Docker Image
+      community.docker.docker_image:
+        build:
+          path: /srv/ppn/services/containers/compose/dnsmasq
+        name: dnsmasq
+        tag: latest
+        source: build
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Build Unbound Docker Image
+      community.docker.docker_image:
+        build:
+          path: /srv/ppn/services/containers/compose/unbound
+        name: unbound
+        tag: latest
+        source: build
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Run Unison sync
+      docker_container:
+        name: unison-docker-sync
+        image: unison-docker:2.51.3
+        command: -batch {{ hostname }}
+        auto_remove: yes
+        tty: yes
+        env:
+          UNISONLOCALHOSTNAME: "{{ hostname }}"
+        volumes:
+          - ~/.unison:/home/unison/.unison
+          - ~/.ssh:/home/unison/.ssh
+          - /srv/ppn:/srv/ppn
+          - /var/log:/var/log
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Run Unison sync
+      ansible.builtin.cron:
+        name: Run Unison sync
+        minute: "*/5"
+        hour: "*"
+        weekday: "*"
+        job: "docker run --rm --env UNISONLOCALHOSTNAME={{ hostname }} --volume /etc/timezone:/etc/timezone:ro --volume /etc/localtime:/etc/localtime:ro --volume ~/.unison:/home/unison/.unison --volume ~/.ssh:/home/unison/.ssh --volume /srv/ppn:/srv/ppn --volume /var/log:/var/log -t unison-docker:2.51.3 -batch {{ hostname }} && curl --fail --silent --show-error --retry 5 --output /dev/null {{ healthcheck_unison }}"
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Remove existing dotfiles
+      file:
+        path: "/home/{{ vault_admin_user }}/.bashrc"
+        state: absent
+
+    - name: Setup symlinks
+      file:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+        state: link
+      with_items:
+        - { src: "/srv/ppn", dest: "/home/{{ vault_admin_user }}/ppn" }
+        - { src: "/srv/ppn/shared/conf/unison/{{ hostname }}.prf", dest: "/home/{{ vault_admin_user }}/.unison/{{ hostname }}.prf" }
+        - { src: "/srv/ppn/shared/dotfiles/bashrc", dest: "/home/{{ vault_admin_user }}/.bashrc" }
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Check if files exist as original name.
+      stat:
+        path: "{{ item.path }}"
+      with_items:
+        - { path: /etc/profile.d/sshpwd.sh }
+        - { path: /etc/profile.d/wifi-check.sh }
+      register: annoying_checks
+
+    - name: Rename files to disable annoying checks
+      command: mv {{ item.src }} {{ item.dest }}
+      with_items:
+        - { src: /etc/profile.d/sshpwd.sh, dest: /etc/profile.d/sshpwd.sh.disabled }
+        - { src: /etc/profile.d/wifi-check.sh, dest: /etc/profile.d/wifi-check.sh.disabled }
+      when: annoying_checks == true
+
+    - name: Reload SSH
+      ansible.builtin.systemd:
+        name: sshd
+        state: restarted
+
+    - name: Enable and start services
+      systemd:
+        enabled: yes
+        state: started
+        name: "{{ item.name }}"
+      with_items:
+        - { name: prometheus-node-exporter }
+ 
+    - name: Set static IP
+      blockinfile:
+        path: /etc/dhcpcd.conf
+        block: |
+          interface {{ vault_interface }}
+          static ip_address={{ vault_static_addr }}/24
+          static routers={{ vault_static_router_addr }}
+          static domain_name_servers={{ vault_static_dns_addr }}
+         
+      # Create macvlan shim network to allow host and containers to communicate despite macvlan:
+      # https://blog.oddbit.com/post/2018-03-12-using-docker-macvlan-networks/
+      # https://rakhesh.com/docker/docker-host-unable-to-talk-to-container-on-macvlan-network/
+    - name: Create macvlan shim network
+      blockinfile:
+        path: /etc/network/interfaces.d/01_macvlan
+        create: yes
+        block: |
+          # macvlan shim network for docker:
+          auto macvlan0
+          iface macvlan0 inet manual
+              pre-up ip link add macvlan0 link {{ vault_interface }} type macvlan mode bridge
+
+              # ppn-int-gb1-nw-01 (RPi) static address:
+              pre-up ip addr add {{ vault_static_addr }}/32 dev macvlan0
+              up ip link set macvlan0 up
+
+              # Route to ppn-int-gb1-nw-01-dns-01 container:
+              post-up ip route add {{ vault_static_dns_addr }}/32 dev macvlan0
+
+              # Route to ppn-int-gb1-nw-01-dhcp-01 container:
+              post-up ip route add {{ vault_static_dhcp_addr }}/32 dev macvlan0
+
+      # Equivalent to docker network create --driver macvlan --subnet 10.19.90.0/24 --gateway 10.19.90.1 --opt parent=eth0 hostname
+    - name: Create docker network
+      docker_network:
+        name: "{{ hostname }}"
+        driver: macvlan
+        enable_ipv6: no
+        state: present
+        ipam_config:
+          - gateway: "{{ vault_static_router_addr }}"
+            subnet: "{{ vault_subnet }}/24"
+        driver_options:
+          parent: "{{ vault_interface }}"
+      become_user: "{{ vault_admin_user }}"
+
