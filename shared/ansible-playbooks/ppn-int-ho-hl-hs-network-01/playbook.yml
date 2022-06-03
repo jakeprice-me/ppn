@@ -273,14 +273,14 @@
           iface macvlan0 inet manual
               pre-up ip link add macvlan0 link {{ vault_interface }} type macvlan mode bridge
 
-              # ppn-int-gb1-nw-01 (RPi) static address:
+              # network-01 (RPi) static address:
               pre-up ip addr add {{ vault_static_addr }}/32 dev macvlan0
               up ip link set macvlan0 up
 
-              # Route to ppn-int-gb1-nw-01-dns-01 container:
+              # Route to network-01-dns-01 container:
               post-up ip route add {{ vault_static_dns_addr }}/32 dev macvlan0
 
-              # Route to ppn-int-gb1-nw-01-dhcp-01 container:
+              # Route to network-01-dhcp-01 container:
               post-up ip route add {{ vault_static_dhcp_addr }}/32 dev macvlan0
 
       # Equivalent to docker network create --driver macvlan --subnet 10.19.90.0/24 --gateway 10.19.90.1 --opt parent=eth0 hostname
