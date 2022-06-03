@@ -16,6 +16,14 @@ ansible-galaxy collection install -r requirements.yml
 
 Most variables are relatively sensitive and are stored in `vault.yml` (I prefix all Ansible Vault variables with `vault_`).
 
+Make sure a password in `.vault_password` is supplied, and then create `vault.yml`.
+
+```sh
+$ ansible-vault create vault.yml
+```
+
+It should contain the following variables.
+
 ```yaml
 vault_admin_user: 
 vault_admin_user_password: 
