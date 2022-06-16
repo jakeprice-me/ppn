@@ -50,6 +50,15 @@
         install_recommends: no
         state: present
 
+    - name: Install Python Packages
+      pip:
+        name:
+          - frontmatter
+          - jinja2
+          - requests
+        extra_args: --user
+      become_user: "{{ admin_user }}"
+
     - name: Download packages
       unarchive:
         src: "{{ item.src }}"
@@ -188,6 +197,16 @@
         hour: "18"
         weekday: "*"
         job: "cd /mnt/data-ssd-01/my/files/code/temperature-alert/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/temperature-alert/main.py"
+      become: yes
+      become_user: "{{ admin_user }}"
+
+    - name: Run todo summary
+      ansible.builtin.cron:
+        name: "Run todo summary"
+        minute: "0"
+        hour: "7"
+        weekday: "*"
+        job: "cd /mnt/data-ssd-01/my/files/code/log-utilities/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/log-utilities/todo_summary.py"
       become: yes
       become_user: "{{ admin_user }}"
 
