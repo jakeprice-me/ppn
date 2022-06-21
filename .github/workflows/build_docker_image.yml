@@ -24,6 +24,9 @@ jobs:
         username: jakepricedev
         password: ${{ secrets.DOCKER_TOKEN }}
 
+    - name: Checkout
+      uses: actions/checkout@v3
+
     - name: Build and push
       uses: docker/build-push-action@v3
       with:
