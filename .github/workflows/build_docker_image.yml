@@ -34,5 +34,5 @@ jobs:
         file: services/containers/images/caddy-namecheap/Dockerfile
         platforms: linux/amd64
         push: true
-        tags: caddy-namecheap:2.4.6
+        tags: jakepricedev/caddy-namecheap/caddy-namecheap:2.4.6
 
