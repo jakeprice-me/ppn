@@ -3,6 +3,7 @@ name: Build Caddy-Namecheap Docker Image
 on:
   push:
     branches: [ "master" ]
+    paths: services/containers/images/caddy-namecheap/Dockerfile
 
 jobs:
   build-and-push-image:
