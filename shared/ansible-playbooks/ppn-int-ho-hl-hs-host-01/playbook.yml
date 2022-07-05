@@ -173,7 +173,7 @@
     - name: Run miniflux-block
       ansible.builtin.cron:
         name: "Run miniflux-block"
-        minute: "*/1"
+        minute: "*/10"
         hour: "*"
         weekday: "*"
         job: "cd /mnt/data-ssd-01/my/files/code/miniflux-block/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/miniflux-block/main.py"
