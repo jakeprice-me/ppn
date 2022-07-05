@@ -210,6 +210,16 @@
       become: yes
       become_user: "{{ admin_user }}"
 
+    - name: Update search index
+      ansible.builtin.cron:
+        name: "Update search index"
+        minute: "0"
+        hour: "1"
+        weekday: "*"
+        job: "/usr/bin/bash /mnt/data-ssd-01/my/files/code/bash-scripts/update_search_index.sh"
+      become: yes
+      become_user: "{{ admin_user }}"
+
     - name: Remove existing dotfiles
       file:
         path: "/home/{{ admin_user }}/.bashrc"
