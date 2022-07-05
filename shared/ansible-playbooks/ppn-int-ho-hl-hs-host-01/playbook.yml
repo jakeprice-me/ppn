@@ -213,8 +213,8 @@
     - name: Update search index
       ansible.builtin.cron:
         name: "Update search index"
-        minute: "0"
-        hour: "1"
+        minute: "*/30"
+        hour: "*"
         weekday: "*"
         job: "/usr/bin/bash /mnt/data-ssd-01/my/files/code/bash-scripts/update_search_index.sh"
       become: yes
