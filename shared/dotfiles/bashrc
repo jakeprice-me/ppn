@@ -1,0 +1,55 @@
+# *****************************************************************************
+# .bashrc
+# *****************************************************************************
+
+# ==== Default ================================================================
+
+# Source global definitions
+if [ -f /etc/bashrc ]; then
+    . /etc/bashrc
+fi
+
+# ==== Custom =================================================================
+
+# ++++ Base +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+# Disable XON/XOFF Flow Control:
+# So you can remap Ctrl + S and Ctrl + Q
+[[ $- == *i* ]] && stty -ixon
+
+# Bracketed paste:
+[[ $- == *i* ]] && bind 'set enable-bracketed-paste on'
+
+export VISUAL=vim
+export EDITOR=$VISUAL
+
+# Bash history:
+HISTSIZE=100000
+HISTFILESIZE=10000000
+HISTTIMEFORMAT="%Y-%m-%d %T "
+
+# Change ls directory colour:
+LS_COLORS=$LS_COLORS:"di=0;94:" ; export LS_COLORS
+
+if [[ $(hostname) == "ppn-int-ho-hl-hs-host-01" ]]; then
+	# Libvirt:
+	export LIBVIRT_DEFAULT_URI=qemu:///system
+fi
+
+# ++++ Aliases ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+alias cd-compose="cd $HOME/ppn/services/containers/compose"
+alias cp='cp --verbose'
+alias ls="ls --color=always --group-directories-first"
+alias mv='mv --verbose'
+alias my-sync="docker run --rm --env UNISONLOCALHOSTNAME=$HOSTNAME --volume /etc/timezone:/etc/timezone:ro --volume ~/.unison:/home/unison/.unison --volume ~/.ssh:/home/unison/.ssh --volume /srv/ppn:/srv/ppn --volume /var/log:/var/log -it unison-docker:2.51.3 $HOSTNAME"
+alias python="python3"
+alias rm='rm --verbose'
+alias src="source $HOME/.bashrc"
+
+# ++++ Prompt +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+# Set prompt:
+RED="\e[31m"
+export PS1="\[$RED\]\u@\h [ \t ] \w\e[0m\n$"
+
