@@ -105,7 +105,15 @@
         state: present
         key: "{{ item.file }}"
       with_items:
-        - { user: "{{ admin_user }}", file: "{{ lookup('file', '../../ssh-keys/{{ hostname }}.pub') }}" }
+        - { user: "{{ admin_user }}", file: "{{ lookup('file', '../../keys/{{ hostname }}.pub') }}" }
+
+    - name: Add remote borg key
+      copy:
+        src: ../../keys/borg_backup_my_remote
+        dest: /home/{{ admin_user }}/.config/borg/keys/borg_backup_my_remote
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: 0600
 
     - name: Configure sshd_config
       ansible.builtin.replace:
@@ -141,7 +149,7 @@
         - { path: /mnt/archive-hdd-01/borg/my }
         - { path: /mnt/data-ssd-01 }
 
-    - name: Borg password file
+    - name: Local Borg repository password file
       copy:
         dest: /home/{{ admin_user }}/.borg_my_passphrase
         owner: "{{ admin_user }}"
@@ -149,6 +157,15 @@
         mode: 0400
         content: |
            {{ vault_borg_my_passphrase }}
+
+    - name: Remote Borg repository password file
+      copy:
+        dest: /home/{{ admin_user }}/.borg_my_remote_passphrase
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: 0400
+        content: |
+           {{ vault_borg_my_remote_passphrase }}
 
     - name: Mount drives
       ansible.posix.mount:
@@ -164,9 +181,19 @@
       ansible.builtin.cron:
         name: "Backup fileshare to Borg repository"
         minute: "0"
-        hour: "3"
+        hour: "22"
         weekday: "*"
         job: "/usr/bin/bash /mnt/data-ssd-01/my/files/code/ppn/shared/scripts/borg_backup_my.sh"
+      become: yes
+      become_user: "{{ admin_user }}"
+
+    - name: Run Remote Borg Backup Script
+      ansible.builtin.cron:
+        name: "Backup fileshare to remote Borg repository"
+        minute: "0"
+        hour: "23"
+        weekday: "*"
+        job: "/usr/bin/bash /mnt/data-ssd-01/my/files/code/ppn/shared/scripts/borg_backup_my_remote.sh"
       become: yes
       become_user: "{{ admin_user }}"
 
