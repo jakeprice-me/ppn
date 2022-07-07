@@ -1,0 +1,285 @@
+---
+- name: Initial Configuration services-01
+  hosts: ppn-int-ho-hl-vm-services-01
+  become: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+  
+    - name: Set timezone
+      community.general.timezone:
+        name: Europe/London
+
+    - name: Set hostname
+      hostname:
+        name: "{{ hostname }}"
+
+    # gpg not present on Debian image by default, so is added by CloudInit when creating the domain's.
+
+    - name: Add repository keys
+      ansible.builtin.apt_key:
+        url: "{{ item.url }}"
+        state: present
+      with_items:
+        - { url: https://download.docker.com/linux/debian/gpg }
+
+    - name: Add repositories
+      ansible.builtin.apt_repository:
+        repo: "{{ item.repo }}"
+        state: present
+      with_items:
+        - { repo: "deb [arch=amd64] https://download.docker.com/linux/debian bullseye stable" }
+
+    - name: Update repositories and packages
+      apt:
+        name: "*"
+        state: latest
+        update_cache: yes
+
+    - name: Install packages
+      apt:
+        pkg:
+          - bash-completion
+          - containerd.io
+          - docker-ce
+          - docker-ce-cli
+          - git
+          - mailutils
+          - prometheus-node-exporter
+          - python3
+          - python3-pip
+          - qemu-guest-agent
+          - vim
+
+    - name: Install Python pip packages.
+      pip:
+        name: 
+          - docker
+          - docker-compose
+          - praw
+        extra_args: --user
+      become: true
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Enable Loki driver for Docker
+      community.docker.docker_plugin:
+        plugin_name: grafana/loki-docker-driver:latest
+        alias: loki
+        state: enable
+      become: true
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Download additional packages
+      unarchive:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+        remote_src: yes
+      with_items:
+        - { src: https://github.com/gohugoio/hugo/releases/download/v{{ hugo_version }}/hugo_{{ hugo_version }}_Linux-64bit.tar.gz, dest: /tmp }
+
+    - name: Copy files
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        remote_src: yes
+      with_items:
+        - { src: /tmp/hugo, dest: /usr/local/bin/hugo }
+    
+    - name: Make downloaded binaries executable
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        mode: "{{ item.mode }}"
+      with_items:
+        - { path: /usr/local/bin/hugo, mode: "0755" }
+    
+    - name: Enable and start services
+      systemd:
+        enabled: yes
+        state: started
+        name: "{{ item.name }}"
+      with_items:
+        - { name: docker }
+        - { name: prometheus-node-exporter }
+
+    - name: Add PPN Admin to Docker Group
+      user:
+        name: "{{ vault_admin_user }}"
+        shell: /bin/bash
+        groups: docker
+        append: yes
+
+    - name: Allow passwordless sudo
+      blockinfile:
+        path: /etc/sudoers
+        block: |
+          {{ vault_admin_user }} ALL=(ALL:ALL) NOPASSWD: ALL
+
+    - name: Upload public key for users
+      authorized_key:
+        user: "{{ item.user }}"
+        state: present
+        key: "{{ item.file }}"
+      with_items:
+        - { user: "{{ vault_admin_user }}", file: "{{ lookup('file', '../../keys/{{ hostname }}.pub') }}" }
+
+    - name: Configure sshd_config
+      ansible.builtin.replace:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      with_items:
+        - { regexp: '#PermitRootLogin prohibit-password', replace: 'PermitRootLogin no' }
+        - { regexp: '#PasswordAuthentication yes', replace: 'PasswordAuthentication no' }
+        - { regexp: '#PermitEmptyPasswords no', replace: 'PermitEmptyPasswords no' }
+        - { regexp: '#LogLevel INFO', replace: 'LogLevel VERBOSE' }
+        - { regexp: '#IgnoreRhosts yes', replace: 'IgnoreRhosts yes' }
+
+    - name: Restart services
+      ansible.builtin.systemd:
+        name: "{{ item.name }}"
+        enabled: yes
+        state: restarted
+      with_items:
+        - { name: sshd }
+
+    - name: Copy host-01 private key
+      ansible.builtin.copy:
+        src: ../../keys/{{ host-01-hostname }}
+        dest: /home/{{ vault_admin_user }}/.ssh/{{ host-01-hostname }}
+        mode: '0400'
+        force: yes
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+
+    - name: Create directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+        recurse: yes
+      with_items:
+        - { path: "/home/{{ vault_admin_user }}/.unison/" }
+        - { path: /mnt/my }
+        - { path: /srv/ppn/services/containers/compose }
+        - { path: /srv/ppn/shared/conf/unison }
+        - { path: /srv/ppn/shared/scripts }
+        - { path: /var/log/unison }
+
+    - name: Mount fileshare via virtiofs
+      ansible.posix.mount:
+        path: /mnt/my
+        src: my-fs
+        opts: "rw,noatime,_netdev"
+        fstype: virtiofs
+        state: mounted
+
+    - name: Copy docker build directories
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+      with_items:
+        - { src: ../../../services/containers/images/caddy-namecheap/, dest: /srv/ppn/services/containers/images/caddy-namecheap/ }
+        - { src: ../../../services/containers/images/unison-docker/, dest: /srv/ppn/services/containers/images/unison-docker/ }
+
+    - name: Copy unison profile file
+      copy:
+        src: ../../../shared/conf/unison/{{ hostname }}.prf
+        dest: /srv/ppn/shared/conf/unison/{{ hostname }}.prf
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+
+    - name: Build Unison Docker Image
+      community.docker.docker_image:
+        build:
+          path: /srv/ppn/services/containers/images/unison-docker
+        name: unison-docker
+        tag: 2.51.3
+        source: build
+      become: true
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Link unison profile file
+      file:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+        state: link
+      with_items:
+        - { src: "/srv/ppn/shared/conf/unison/{{ hostname }}.prf", dest: "/home/{{ vault_admin_user }}/.unison/{{ hostname }}.prf" }
+      become_user: "{{ vault_admin_user }}"
+      become: false
+
+    - name: Run Unison sync
+      docker_container:
+        name: unison-docker-sync
+        image: unison-docker:2.51.3
+        command: -batch {{ hostname }}
+        auto_remove: yes
+        tty: yes
+        env:
+          UNISONLOCALHOSTNAME: "{{ hostname }}"
+        volumes:
+          - ~/.unison:/home/unison/.unison
+          - ~/.ssh:/home/unison/.ssh
+          - /srv/ppn:/srv/ppn
+          - /var/log:/var/log
+      become: true
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Build Caddy Namecheap Image
+      community.docker.docker_image:
+        build:
+          path: /srv/ppn/services/containers/images/caddy-namecheap
+        name: caddy-namecheap
+        tag: latest
+        source: build
+      become: true
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Remove existing dotfiles
+      file:
+        path: "/home/{{ vault_admin_user }}/.bashrc"
+        state: absent
+
+    - name: Setup dotfiles and some helpful symlinks
+      file:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ vault_admin_user }}"
+        group: "{{ vault_admin_user }}"
+        state: link
+      with_items:
+        - { src: "/srv/ppn", dest: "/home/{{ vault_admin_user }}/ppn" }
+        - { src: "/srv/ppn/shared/dotfiles/bashrc", dest: "/home/{{ vault_admin_user }}/.bashrc" }
+      become_user: "{{ vault_admin_user }}"
+      become: false
+
+    - name: Setup Cron jobs
+      ansible.builtin.cron:
+        name: "{{ item.name }}"
+        minute: "{{ item.minute }}"
+        hour: "{{ item.hour }}"
+        weekday: "{{ item.weekday }}"
+        job: "{{ item.job }}"
+      with_items:
+        - { name: "Log Build", minute: "*/5", hour: "*", weekday: "*", job: 'rm -rf /mnt/my/files/documents/log/public && /usr/local/bin/hugo --source /mnt/my/files/documents/log >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_log_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_log_build_healthcheck }}' }
+        - { name: "Bible Build", minute: "*/5", hour: "*", weekday: "*", job: 'rm -rf /mnt/my/files/documents/bible/public && /usr/local/bin/hugo --source /mnt/my/files/documents/bible >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_bible_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_bible_build_healthcheck }}' }
+        - { name: "Top Reddit Posts", minute: "50", hour: "5", weekday: "mon", job: 'python3 /mnt/my/files/code/top-reddit-posts/get_posts.py' }
+        - { name: "Run Unison Sync", minute: "*/5", hour: "*", weekday: "*", job: 'docker run --rm --env UNISONLOCALHOSTNAME={{ hostname }} --volume /etc/timezone:/etc/timezone:ro --volume /etc/localtime:/etc/localtime:ro --volume ~/.unison:/home/unison/.unison --volume ~/.ssh:/home/unison/.ssh --volume /srv/ppn:/srv/ppn --volume /var/log:/var/log -t unison-docker:2.51.3 -batch {{ hostname }} && curl --fail --silent --show-error --retry 5 --output /dev/null {{ vault_unison_healthcheck }}' }
+      become: true
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Create Docker network
+      docker_network:
+        name: "{{ hostname }}"
+        driver: bridge
+      become: true
+      become_user: "{{ vault_admin_user }}"
+

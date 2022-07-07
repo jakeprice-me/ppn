@@ -1,0 +1,3 @@
+host-01-hostname: ppn-int-ho-hl-hs-host-01
+hostname: ppn-int-ho-hl-vm-services-01
+hugo_version: 0.99.1
