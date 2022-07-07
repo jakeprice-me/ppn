@@ -199,7 +199,7 @@
         build:
           path: /srv/ppn/services/containers/images/unison-docker
         name: unison-docker
-        tag: 2.51.3
+        tag: "{{ unison_version }}"
         source: build
       become: true
       become_user: "{{ vault_admin_user }}"
@@ -219,7 +219,7 @@
     - name: Run Unison sync
       docker_container:
         name: unison-docker-sync
-        image: unison-docker:2.51.3
+        image: unison-docker:{{ unison_version }}
         command: -batch {{ hostname }}
         auto_remove: yes
         tty: yes
@@ -272,7 +272,7 @@
         - { name: "Log Build", minute: "*/5", hour: "*", weekday: "*", job: 'rm -rf /mnt/my/files/documents/log/public && /usr/local/bin/hugo --source /mnt/my/files/documents/log >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_log_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_log_build_healthcheck }}' }
         - { name: "Bible Build", minute: "*/5", hour: "*", weekday: "*", job: 'rm -rf /mnt/my/files/documents/bible/public && /usr/local/bin/hugo --source /mnt/my/files/documents/bible >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_bible_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_bible_build_healthcheck }}' }
         - { name: "Top Reddit Posts", minute: "50", hour: "5", weekday: "mon", job: 'python3 /mnt/my/files/code/top-reddit-posts/get_posts.py' }
-        - { name: "Run Unison Sync", minute: "*/5", hour: "*", weekday: "*", job: 'docker run --rm --env UNISONLOCALHOSTNAME={{ hostname }} --volume /etc/timezone:/etc/timezone:ro --volume /etc/localtime:/etc/localtime:ro --volume ~/.unison:/home/unison/.unison --volume ~/.ssh:/home/unison/.ssh --volume /srv/ppn:/srv/ppn --volume /var/log:/var/log -t unison-docker:2.51.3 -batch {{ hostname }} && curl --fail --silent --show-error --retry 5 --output /dev/null {{ vault_unison_healthcheck }}' }
+        - { name: "Run Unison Sync", minute: "*/5", hour: "*", weekday: "*", job: 'docker run --rm --env UNISONLOCALHOSTNAME={{ hostname }} --volume /etc/timezone:/etc/timezone:ro --volume /etc/localtime:/etc/localtime:ro --volume ~/.unison:/home/unison/.unison --volume ~/.ssh:/home/unison/.ssh --volume /srv/ppn:/srv/ppn --volume /var/log:/var/log -t unison-docker:{{ unison_version }} -batch {{ hostname }} && curl --fail --silent --show-error --retry 5 --output /dev/null {{ vault_unison_healthcheck }}' }
       become: true
       become_user: "{{ vault_admin_user }}"
 

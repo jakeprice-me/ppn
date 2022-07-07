@@ -1,3 +1,4 @@
 host-01-hostname: ppn-int-ho-hl-hs-host-01
 hostname: ppn-int-ho-hl-vm-services-01
 hugo_version: 0.99.1
+unison_version: 2.51.3
