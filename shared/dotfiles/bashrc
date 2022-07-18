@@ -51,5 +51,5 @@ alias src="source $HOME/.bashrc"
 
 # Set prompt:
 RED="\e[31m"
-export PS1="\[$RED\]\u@\h [ \t ] \w\e[0m\n$"
+export PS1="\[$RED\]\u@\h [ \t ] \w\e[0m\n$ "
 
