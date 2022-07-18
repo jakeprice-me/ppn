@@ -4,6 +4,7 @@
   become: true
   vars_files:
     - vars.yml
+    - vault.yml
 
   tasks:
   
@@ -78,7 +79,7 @@
         group: "{{ vault_admin_user }}"
         remote_src: yes
       with_items:
-        - { src: https://github.com/gohugoio/hugo/releases/download/v{{ hugo_version }}/hugo_{{ hugo_version }}_Linux-64bit.tar.gz, dest: /tmp }
+        - { src: "https://github.com/gohugoio/hugo/releases/download/v{{ hugo_version }}/hugo_{{ hugo_version }}_Linux-64bit.tar.gz", dest: /tmp }
 
     - name: Copy files
       copy:
@@ -147,8 +148,8 @@
 
     - name: Copy host-01 private key
       ansible.builtin.copy:
-        src: ../../keys/{{ host-01-hostname }}
-        dest: /home/{{ vault_admin_user }}/.ssh/{{ host-01-hostname }}
+        src: ../../keys/{{ host_01_hostname }}
+        dest: /home/{{ vault_admin_user }}/.ssh/{{ host_01_hostname }}
         mode: '0400'
         force: yes
         owner: "{{ vault_admin_user }}"
@@ -269,8 +270,8 @@
         weekday: "{{ item.weekday }}"
         job: "{{ item.job }}"
       with_items:
-        - { name: "Log Build", minute: "*/5", hour: "*", weekday: "*", job: 'rm -rf /mnt/my/files/documents/log/public && /usr/local/bin/hugo --source /mnt/my/files/documents/log >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_log_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_log_build_healthcheck }}' }
-        - { name: "Bible Build", minute: "*/5", hour: "*", weekday: "*", job: 'rm -rf /mnt/my/files/documents/bible/public && /usr/local/bin/hugo --source /mnt/my/files/documents/bible >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_bible_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_bible_build_healthcheck }}' }
+        - { name: "Log Build", minute: "0", hour: "*", weekday: "*", job: 'rm -rf /mnt/my/files/documents/log/public && /usr/local/bin/hugo --source /mnt/my/files/documents/log >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_log_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_log_build_healthcheck }}' }
+        - { name: "Bible Build", minute: "0", hour: "6", weekday: "*", job: 'rm -rf /mnt/my/files/documents/bible/public && /usr/local/bin/hugo --source /mnt/my/files/documents/bible >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_bible_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_bible_build_healthcheck }}' }
         - { name: "Top Reddit Posts", minute: "50", hour: "5", weekday: "mon", job: 'python3 /mnt/my/files/code/top-reddit-posts/get_posts.py' }
         - { name: "Run Unison Sync", minute: "*/5", hour: "*", weekday: "*", job: 'docker run --rm --env UNISONLOCALHOSTNAME={{ hostname }} --volume /etc/timezone:/etc/timezone:ro --volume /etc/localtime:/etc/localtime:ro --volume ~/.unison:/home/unison/.unison --volume ~/.ssh:/home/unison/.ssh --volume /srv/ppn:/srv/ppn --volume /var/log:/var/log -t unison-docker:{{ unison_version }} -batch {{ hostname }} && curl --fail --silent --show-error --retry 5 --output /dev/null {{ vault_unison_healthcheck }}' }
       become: true
