@@ -359,8 +359,8 @@
           [Service]
           ExecStart=/usr/local/bin/OliveTin
           Restart=always
-          User=ppn-admin
-          Group=ppn-admin
+          User={{ vault_admin_user }}
+          Group={{ vault_admin_user }}
 
           [Install]
           WantedBy=multi-user.target
