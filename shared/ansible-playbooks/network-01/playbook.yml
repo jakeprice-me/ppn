@@ -1,5 +1,5 @@
 ---
-- name: Network-01 Server Configuration
+- name: network-01 Server Configuration
   hosts: "{{ hostname }}"
   become: true
   vars_files:
@@ -79,8 +79,8 @@
         password: "{{ vault_admin_user_password | password_hash('sha512') }}"
         update_password: always
         groups:
-          - sudo
           - docker
+          - sudo
         state: present
 
     - name: Allow passwordless sudo
@@ -107,18 +107,18 @@
         state: present
         key: "{{ item.file }}"
       with_items:
-        - { user: "{{ vault_admin_user }}", file: "{{ lookup('file', '../../ssh-keys/{{ hostname }}.pub') }}" }
+        - { user: "{{ vault_admin_user }}", file: "{{ lookup('file', '../../keys/{{ hostname }}.pub') }}" }
 
     - name: Add host to known hosts
       known_hosts:
         path: "/home/{{ vault_admin_user }}/.ssh/known_hosts"
-        name: "{{ static_fileserver_addr }}"
-        key: "{{ lookup('pipe', 'ssh-keyscan {{ static_fileserver_addr }} ') }}"
+        name: "{{ vault_static_fileserver_addr }}"
+        key: "{{ lookup('pipe', 'ssh-keyscan {{ vault_static_fileserver_addr }} ') }}"
 
     - name: Copy host-01 private key
       ansible.builtin.copy:
-        src: ../../ssh-keys/ppn-int-ho-hl-hs-host-01
-        dest: ~/.ssh/ppn-int-ho-hl-hs-host-01
+        src: ../../keys/main-01
+        dest: $HOME/.ssh/main-01
         mode: '0400'
         force: yes
         owner: "{{ vault_admin_user }}"
@@ -139,13 +139,6 @@
         - { path: /srv/ppn/shared/scripts }
         - { path: /var/log/unison }
 
-    - name: Copy unison-docker build directory
-      copy:
-        src: ../../../services/containers/images/unison-docker/
-        dest: /srv/ppn/services/containers/images/unison-docker/
-        owner: "{{ vault_admin_user }}"
-        group: "{{ vault_admin_user }}"
-
     - name: Copy unison profile file
       copy:
         src: ../../../shared/conf/unison/{{ hostname }}.prf
@@ -162,25 +155,7 @@
         source: build
       become_user: "{{ vault_admin_user }}"
 
-    - name: Build dnsmasq Docker Image
-      community.docker.docker_image:
-        build:
-          path: /srv/ppn/services/containers/compose/dnsmasq
-        name: dnsmasq
-        tag: latest
-        source: build
-      become_user: "{{ vault_admin_user }}"
-
-    - name: Build Unbound Docker Image
-      community.docker.docker_image:
-        build:
-          path: /srv/ppn/services/containers/compose/unbound
-        name: unbound
-        tag: latest
-        source: build
-      become_user: "{{ vault_admin_user }}"
-
-    - name: Run Unison sync
+    - name: Run initial Unison sync
       docker_container:
         name: unison-docker-sync
         image: unison-docker:2.51.3
@@ -202,7 +177,7 @@
         minute: "*/5"
         hour: "*"
         weekday: "*"
-        job: "docker run --rm --env UNISONLOCALHOSTNAME={{ hostname }} --volume /etc/timezone:/etc/timezone:ro --volume /etc/localtime:/etc/localtime:ro --volume ~/.unison:/home/unison/.unison --volume ~/.ssh:/home/unison/.ssh --volume /srv/ppn:/srv/ppn --volume /var/log:/var/log -t unison-docker:2.51.3 -batch {{ hostname }} && curl --fail --silent --show-error --retry 5 --output /dev/null {{ healthcheck_unison }}"
+        job: "docker run --rm --env UNISONLOCALHOSTNAME={{ hostname }} --volume /etc/timezone:/etc/timezone:ro --volume /etc/localtime:/etc/localtime:ro --volume ~/.unison:/home/unison/.unison --volume ~/.ssh:/home/unison/.ssh --volume /srv/ppn:/srv/ppn --volume /var/log:/var/log -t unison-docker:2.51.3 -batch {{ hostname }} && curl --fail --silent --show-error --retry 5 --output /dev/null {{ vault_healthcheck_unison }}"
       become_user: "{{ vault_admin_user }}"
 
     - name: Remove existing dotfiles
@@ -283,7 +258,7 @@
               # Route to network-01-dhcp-01 container:
               post-up ip route add {{ vault_static_dhcp_addr }}/32 dev macvlan0
 
-      # Equivalent to docker network create --driver macvlan --subnet <value>/24 --gateway <value> --opt parent=<interface> <hostname>
+      # Equivalent to `docker network create --driver macvlan --subnet <value>/24 --gateway <value> --opt parent=<interface> <hostname>`
     - name: Create docker network
       docker_network:
         name: "{{ hostname }}"
@@ -296,4 +271,13 @@
         driver_options:
           parent: "{{ vault_interface }}"
       become_user: "{{ vault_admin_user }}"
+
+    # Loki not currently built for arm:
+    # - name: Enable Loki driver for Docker
+    #   community.docker.docker_plugin:
+    #     plugin_name: grafana/loki-docker-driver:latest
+    #     alias: loki
+    #     state: enable
+    #   become: true
+    #   become_user: "{{ vault_admin_user }}"
 
