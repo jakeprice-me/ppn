@@ -1,5 +1,5 @@
 ---
-- name: Host-01 Server Configuration
+- name: main-01 Server Configuration
   hosts: "{{ hostname }}"
   become: true
   vars_files:
@@ -15,49 +15,88 @@
     - name: Set hostname
       hostname:
         name: "{{ hostname }}"
-    
-    - name: Update repositories and packages
-      apt:
-        name: "*"
-        state: latest
-        update_cache: yes
 
-    - name: Install packages
-      apt:
+    - name: Install RPM Fusion
+      dnf:
+        name: "{{ item.name }}"
+        state: present
+        disable_gpg_check: yes
+      with_items:
+        - { name: "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-36.noarch.rpm" }
+        - { name: "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-36.noarch.rpm" }
+
+    - name: Configure dnf
+      blockinfile:
+        path: /etc/dnf/dnf.conf
+        block: |
+          fastestmirror=true
+          max_parallel_downloads=20
+
+    - name: Add repositories
+      command: "{{ item.command }}"
+      with_items:
+        - { command: "dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo" }
+
+    - name: Install main packages
+      dnf:
         pkg:
+          - akmod-nvidia
           - bash-completion
           - borgbackup
-          - cockpit
-          - cockpit-machines
-          - cockpit-pcp
+          - cloud-utils
+          - containerd.io
+          - cronie
           - curl
+          - docker-ce
+          - docker-ce-cli
+          - docker-compose-plugin
+          - git
+          - golang-github-prometheus-node-exporter
           - gpg
+          - htop
+          - jq
+          - mailx
           - net-tools
-          - prometheus-node-exporter
+          - pandoc
           - python3
           - python3-pip
           - samba
+          - setools
+          - setroubleshoot
           - tree
           - vim
-        state: present
+          - xorg-x11-drv-nvidia-cuda
+        state: latest
+        update_cache: yes
 
-    - name: Install QEMU/KVM
-      apt:
+    - name: Install Cockpit
+      dnf:
         pkg:
-          - libvirt-clients
-          - libvirt-daemon-system
-          - qemu-system
-        install_recommends: no
-        state: present
+          - cockpit
+          - cockpit-machines
+          - cockpit-pcp
+        state: latest
+        update_cache: yes
 
     - name: Install Python Packages
       pip:
-        name:
-          - frontmatter
+        name: 
+          - PyYAML
           - jinja2
+          - praw
+          - python-frontmatter
           - requests
         extra_args: --user
-      become_user: "{{ admin_user }}"
+      become: true
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Install Docker Packages
+      pip:
+        name: 
+          - docker
+        extra_args: --user
+      become: true
+      become_user: "{{ vault_admin_user }}"
 
     - name: Download packages
       unarchive:
@@ -68,6 +107,18 @@
         remote_src: yes
       with_items:
         - { src: "https://github.com/bcpierce00/unison/releases/download/v{{ unison_version }}/unison-v{{ unison_version }}+ocaml-{{ unison_ocaml_version }}+x86_64.linux.tar.gz", dest: /tmp }
+        - { src: "https://github.com/gohugoio/hugo/releases/download/v{{ hugo_version }}/hugo_{{ hugo_version }}_Linux-64bit.tar.gz", dest: /tmp }
+
+    - name: Download OliveTin
+      ansible.builtin.get_url:
+        url: https://github.com/OliveTin/OliveTin/releases/download/2022-04-07/OliveTin_2022-04-07_linux_amd64.rpm
+        dest: /tmp/olivetin.rpm
+
+    - name: Install OliveTree
+      ansible.builtin.yum:
+        name: /tmp/olivetin.rpm
+        disable_gpg_check: yes
+        state: present
 
     - name: Move package binaries
       copy:
@@ -75,6 +126,7 @@
         dest: "{{ item.dest }}"
         remote_src: yes
       with_items:
+        - { src: /tmp/hugo, dest: /usr/local/bin/hugo }
         - { src: /tmp/bin/unison, dest: /usr/local/bin/unison }
 
     - name: Make binaries executable
@@ -82,22 +134,38 @@
         path: "{{ item.path }}"
         mode: "{{ item.mode }}"
       with_items:
+        - { path: /usr/local/bin/hugo, mode: "0755" }
         - { path: /usr/local/bin/unison, mode: "0755" }
+
+    - name: Add user to groups
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        groups:
+          - "{{ admin_user }}"
+          - wheel
+          - docker
+
+    - name: Enable and start docker
+      systemd:
+        enabled: yes
+        state: started
+        name: "{{ item.name }}"
+      with_items:
+        - { name: docker }
+
+    - name: Enable Loki driver for Docker
+      community.docker.docker_plugin:
+        plugin_name: grafana/loki-docker-driver:latest
+        alias: loki
+        state: enable
+      become: true
+      become_user: "{{ vault_admin_user }}"
 
     - name: Allow passwordless sudo
       blockinfile:
         path: /etc/sudoers
         block: |
           {{ admin_user }} ALL=(ALL:ALL) NOPASSWD: ALL
- 
-    - name: Add user to groups
-      ansible.builtin.user:
-        name: "{{ admin_user }}"
-        groups:
-          - "{{ admin_user }}"
-          - kvm
-          - libvirt
-          - sudo
  
     - name: Upload public key for users
       authorized_key:
@@ -107,6 +175,19 @@
       with_items:
         - { user: "{{ admin_user }}", file: "{{ lookup('file', '../../keys/{{ hostname }}.pub') }}" }
 
+    - name: Create directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+      with_items:
+        - { path: "/home/{{ admin_user }}/.config/borg/keys" }
+        - { path: /mnt/archive-hdd-01 }
+        - { path: /mnt/archive-hdd-01/borg/my }
+        - { path: /mnt/data-ssd-01 }
+        - { path: /var/www/olivetin/customIcons/ }
+
     - name: Add remote borg key
       copy:
         src: ../../keys/borg_backup_my_remote
@@ -114,6 +195,14 @@
         owner: "{{ admin_user }}"
         group: "{{ admin_user }}"
         mode: 0600
+
+    - name: Add remote borg private ssh key
+      copy:
+        src: ../../keys/id_rsa
+        dest: /home/{{ admin_user }}/.ssh/id_rsa
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: 0400
 
     - name: Configure sshd_config
       ansible.builtin.replace:
@@ -131,23 +220,6 @@
       ansible.builtin.systemd:
         name: sshd
         state: restarted
-
-    - name: Disable selinux for qemu (as we're using Debian)
-      replace:
-        path: /etc/libvirt/qemu.conf
-        regexp: '#security_driver = "selinux"'
-        replace: 'security_driver = "none"'
-
-    - name: Create directories
-      file:
-        path: "{{ item.path }}"
-        state: directory
-        owner: "{{ admin_user }}"
-        group: "{{ admin_user }}"
-      with_items:
-        - { path: /mnt/archive-hdd-01 }
-        - { path: /mnt/archive-hdd-01/borg/my }
-        - { path: /mnt/data-ssd-01 }
 
     - name: Local Borg repository password file
       copy:
@@ -174,17 +246,16 @@
         fstype: "{{ item.fstype }}"
         state: mounted
       with_items:
-        - { path: /mnt/data-ssd-01, src: UUID=7a28fb27-9957-4231-a9cf-1a7fa0108920, fstype: ext4 }
-        - { path: /mnt/archive-hdd-01, src: UUID=ebc7b754-fa8f-4387-a979-a55f72a180e0, fstype: ext4 }
+        - { path: /mnt/data-ssd-01, src: UUID=57cc0091-0ba2-48f0-a327-cd7c2c4a0545, fstype: ext4 }
 
-    - name: Run Borg Backup Script
+    - name: cronjob to Run Borg Backup Script
       ansible.builtin.cron:
         name: "Backup fileshare to Borg repository"
         minute: "0"
         hour: "22"
         weekday: "*"
-        job: "/usr/bin/bash /mnt/data-ssd-01/my/files/code/ppn/shared/scripts/borg_backup_my.sh"
-      become: yes
+        job: '/usr/bin/bash /mnt/data-ssd-01/my/files/code/ppn/shared/scripts/borg_backup_my.sh 2>&1 | tee /tmp/$(date +\%Y\%m\%d\%H\%M\%S)_borg_backup_my.log'
+      become: true
       become_user: "{{ admin_user }}"
 
     - name: Run Remote Borg Backup Script
@@ -193,58 +264,8 @@
         minute: "0"
         hour: "23"
         weekday: "*"
-        job: "/usr/bin/bash /mnt/data-ssd-01/my/files/code/ppn/shared/scripts/borg_backup_my_remote.sh"
-      become: yes
-      become_user: "{{ admin_user }}"
-
-    - name: Run miniflux-block
-      ansible.builtin.cron:
-        name: "Run miniflux-block"
-        minute: "*/10"
-        hour: "*"
-        weekday: "*"
-        job: "cd /mnt/data-ssd-01/my/files/code/miniflux-block/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/miniflux-block/main.py"
-      become: yes
-      become_user: "{{ admin_user }}"
-
-    - name: Run weather-report
-      ansible.builtin.cron:
-        name: "Run weather-report"
-        minute: "0"
-        hour: "7"
-        weekday: "*"
-        job: "cd /mnt/data-ssd-01/my/files/code/weather-report/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/weather-report/main.py"
-      become: yes
-      become_user: "{{ admin_user }}"
-
-    - name: Run temperature alert
-      ansible.builtin.cron:
-        name: "Run temperature-alert"
-        minute: "0"
-        hour: "18"
-        weekday: "*"
-        job: "cd /mnt/data-ssd-01/my/files/code/temperature-alert/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/temperature-alert/main.py"
-      become: yes
-      become_user: "{{ admin_user }}"
-
-    - name: Run todo summary
-      ansible.builtin.cron:
-        name: "Run todo summary"
-        minute: "0"
-        hour: "7"
-        weekday: "*"
-        job: "cd /mnt/data-ssd-01/my/files/code/log-utilities/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/log-utilities/todo_summary.py"
-      become: yes
-      become_user: "{{ admin_user }}"
-
-    - name: Update search index
-      ansible.builtin.cron:
-        name: "Update search index"
-        minute: "*/27"
-        hour: "*"
-        weekday: "*"
-        job: "/usr/bin/bash /mnt/data-ssd-01/my/files/code/bash-scripts/update_search_index.sh"
-      become: yes
+        job: '/usr/bin/bash /mnt/data-ssd-01/my/files/code/ppn/shared/scripts/borg_backup_my_remote.sh 2>&1 | tee /tmp/$(date +\%Y\%m\%d\%H\%M\%S)_borg_backup_my_remote.log'
+      become: true
       become_user: "{{ admin_user }}"
 
     - name: Remove existing dotfiles
@@ -300,14 +321,86 @@
           Origins = https://cockpit-{{ hostname }}.int.ppn.sh
           ProtocolHeader = X-Forwarded-Proto
 
+    - name: Allow Samba Traffic
+      ansible.posix.firewalld:
+        service: samba
+        permanent: yes
+        state: enabled
+        immediate: yes
+        zone: FedoraServer
+
+    - name: Open ports
+      ansible.posix.firewalld:
+        port: "{{ item.port }}"
+        permanent: yes
+        state: enabled
+        immediate: yes
+        zone: FedoraServer
+      with_items:
+        - { port: 1337/tcp } # olivetin
+        - { port: 9100/tcp } # node exporter
+
+    - name: Allow samba to access files in /mnt/data-ssd-01
+      community.general.sefcontext:
+        target: "/mnt/data-ssd-01(/.*)?"
+        setype: samba_share_t
+        state: present
+
+    - name: Apply new SELinux file context to filesystem
+      ansible.builtin.command: restorecon -irv /mnt/data-ssd-01
+
+    - name: Alter systemd unit file for OliveTin to not run as root
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/OliveTin.service
+        content: |
+          [Unit]
+          Description=OliveTin
+
+          [Service]
+          ExecStart=/usr/local/bin/OliveTin
+          Restart=always
+          User=ppn-admin
+          Group=ppn-admin
+
+          [Install]
+          WantedBy=multi-user.target
+
     - name: Enable and start services
       systemd:
         enabled: yes
         state: restarted
+        daemon_reload: yes
         name: "{{ item.name }}"
       with_items:
+        - { name: OliveTin }
         - { name: cockpit }
-        - { name: libvirtd }
+        - { name: firewalld }
         - { name: prometheus-node-exporter }
-        - { name: smbd }
+        - { name: smb }
+
+    - name: Create Docker network
+      docker_network:
+        name: "{{ hostname }}"
+        driver: bridge
+      become: true
+      become_user: "{{ vault_admin_user }}"
+
+    - name: Setup Cron jobs
+      ansible.builtin.cron:
+        name: "{{ item.name }}"
+        minute: "{{ item.minute }}"
+        hour: "{{ item.hour }}"
+        weekday: "{{ item.weekday }}"
+        job: "{{ item.job }}"
+      with_items:
+        - { name: "Log Build", minute: "0", hour: "*", weekday: "*", job: 'rm -rf /mnt/data-ssd-01/my/files/documents/log/public && /usr/local/bin/hugo --source /mnt/data-ssd-01/my/files/documents/log >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_log_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_log_build_healthcheck }}' }
+        - { name: "Bible Build", minute: "0", hour: "6", weekday: "*", job: 'rm -rf /mnt/data-ssd-01/my/files/documents/bible/public && /usr/local/bin/hugo --source /mnt/data-ssd-01/my/files/documents/bible >> /tmp/"$(date +\%Y\%m\%d\%H\%M\%S)"_bible_build.log 2>&1 && curl --fail --silent --show-error --max-time 10 --retry 5 --output /dev/null {{ vault_bible_build_healthcheck }}' }
+        - { name: "Top Reddit Posts", minute: "50", hour: "5", weekday: "mon", job: 'python3 /mnt/data-ssd-01/my/files/code/top-reddit-posts/get_posts.py' }
+        - { name: "Run miniflux-block", minute: "*/10", hour: "*", weekday: "*", job: "cd /mnt/data-ssd-01/my/files/code/miniflux-block/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/miniflux-block/main.py" }
+        - { name: "Run weather-report", minute: "0", hour: "7", weekday: "*", job: "cd /mnt/data-ssd-01/my/files/code/weather-report/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/weather-report/main.py" }
+        - { name: "Run temperature-alert", minute: "0", hour: "18", weekday: "*", job: "cd /mnt/data-ssd-01/my/files/code/temperature-alert/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/temperature-alert/main.py" }
+        - { name: "Run todo summary", minute: "0", hour: "7", weekday: "*", job: "cd /mnt/data-ssd-01/my/files/code/log-utilities/ && /usr/bin/python3 /mnt/data-ssd-01/my/files/code/log-utilities/todo_summary.py" }
+        - { name: "Update search index", minute: "10", hour: "*", weekday: "*", job: "/usr/bin/bash /mnt/data-ssd-01/my/files/code/bash-scripts/update_search_index.sh" }
+      become: true
+      become_user: "{{ vault_admin_user }}"
 
