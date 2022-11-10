@@ -1,6 +1,6 @@
 # PPN Raspberry Pi Network Server Configuration
 
-Playbook for `network-01` which is a Raspberry Pi 4 server that provides DNS (Unbound) and DHCP (dnsmasq) services to my LAN.
+Playbook for `network-01` which is a 2GB Raspberry Pi 4B that provides DNS (using unbound) and DHCP (using dnsmasq) services to my LAN.
 
 ## Install Roles & Collections
 
@@ -14,9 +14,9 @@ ansible-galaxy collection install -r requirements.yml
 
 ### Ansible Vault
 
-Most variables are relatively sensitive and are stored in `vault.yml` (I prefix all Ansible Vault variables with `vault_`).
+Most variables are relatively sensitive and are therefore stored in `vault.yml`.
 
-Make sure a password in `.vault_password` is supplied, and then create `vault.yml`.
+Create `.vault_password` and pop the password you want to use for the vault in the file. Then create `vault.yml`.
 
 ```sh
 $ ansible-vault create vault.yml
