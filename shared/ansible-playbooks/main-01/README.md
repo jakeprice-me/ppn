@@ -1,8 +1,8 @@
-# PPN Virtual Host Server Configuration
+# PPN Main Server Configuration
 
-## host-01
+## main-01
 
-This playbook will setup the host server that runs virtual machines on PPN.
+This playbook will setup the server that runs the vast majority of self-hosted services on my LAN.
 
 ## Install Roles & Collections
 
@@ -39,11 +39,23 @@ echo <password> > .vault_password
 ansible-vault create vault.yml
 ```
 
+## Issues
+
+If you have issues with Loki getting enabled, run the below on the server manually.
+
+```sh
+docker plugin install  grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
+```
+
 ## Run Playbook
 
 Run the playbook as shown below.
 
 ```sh
+# Initial run:
+ansible-playbook playbook.yml --ask-become-pass
+
+# Every other run:
 ansible-playbook playbook.yml
 ```
 
